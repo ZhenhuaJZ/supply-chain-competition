@@ -44,7 +44,7 @@ def stack_split(feature, labels, number_of_model):
 
 
 
-def stack_layer(names, classifiers, feature, labels, test_feature, layer_name):
+def stack_layer(names, classifiers, feature, labels, test_feature):
 
         # progress_log(names, classifiers, layer_name)
         fold_split, fold_split_label, feature_split, label_split = stack_split(feature,labels,5)
@@ -56,17 +56,18 @@ def stack_layer(names, classifiers, feature, labels, test_feature, layer_name):
             test_score = []
 
             for i in tqdm(range(len(fold_split))):
-                start = time.time()
-                print("\nProcessing model :{} fold {}".format(name, i+1))
+                # print("\nProcessing model :{} fold {}".format(name, i+1))
                 clf.fit(feature_split["feature_{}".format(i+1)], label_split["label_{}".format(i+1)])
-                print("Training complete")
-                stack_score = clf.predict_proba(fold_split["fold_{}".format(i+1)])
-                print("fold score predicted")
-                test_prediction = clf.predict_proba(test_feature)
-                print("test score predicted")
-                test_score.append(test_prediction[:,1].tolist())
-                fold_score += stack_score[:,1].tolist()
-                print("model {}".format(name) + " complete")
+                # print("Training complete")
+                stack_score = clf.predict(fold_split["fold_{}".format(i+1)])
+                # print("fold score predicted")
+                test_prediction = clf.predict(test_feature)
+                print(test_prediction.shape)
+                print(stack_score)
+                # print("test score predicted")
+                test_score.append(test_prediction.tolist())
+                fold_score += stack_score.tolist()
+                # print("model {}".format(name) + " complete")
 
             #Averaging stacked
             stack_test_layer1_preds = np.stack(test_score, 1)
@@ -88,12 +89,51 @@ def stack_layer(names, classifiers, feature, labels, test_feature, layer_name):
         # np.savetxt(log_file + "{}_test_{}:{}.csv".format(layer_name, now.hour, now.minute) ,layer_transform_test ,fmt = '%.9f', delimiter = ',')
         return layer_transform_train, layer_transform_test
 
+def two_layer_stack(train_x, train_y, test, mode = "full", save_path = "", save_name = ""):
+    if mode == "full":
+        clf_names = ["XGBRegressor", "LGBMRegressor", "Lasso", "Ridge"]
+        classifiers = [
+            XGBRegressor(max_depth = 3, learning_rate = 0.1, n_eatimators = 100),
+            LGBMRegressor(num_leaves = 31, max_depth = 4, learning_rate = 0.1, n_estimators = 100),
+            Lasso(alpha = 0.1),
+            Ridge(alpha = 0.5)
+        ]
+        layer_1_train, layer_1_test = stack_layer(clf_names, classifiers, train_x, train_y, test)
 
-def main():
+    if mode == "save":
+        clf_names = ["XGBRegressor", "LGBMRegressor", "Lasso", "Ridge"]
+        classifiers = [
+            XGBRegressor(max_depth = 3, learning_rate = 0.1, n_eatimators = 100, n_jobs = -1),
+            LGBMRegressor(num_leaves = 31, max_depth = 4, learning_rate = 0.1, n_estimators = 100, n_jobs = -1),
+            Lasso(alpha = 0.1),
+            Ridge(alpha = 0.5)
+        ]
+        layer_1_train, layer_1_test = stack_layer(clf_names, classifiers, train_x, train_y, test)
+        pd.to_csv(layer_1_train, save_path + save_name)
+        pd.to_csv(layer_1_test, save_path + save_name)
+
+    if mode == "read":
+        layer_1_train = pd.read_csv(save_path + save_name)
+        layer_1_test = pd.read_csv(save_path + save_name)
+
     clf_names = ["XGBRegressor", "LGBMRegressor", "Lasso", "Ridge"]
     classifiers = [
         XGBRegressor(max_depth = 3, learning_rate = 0.1, n_eatimators = 100),
-        LGBMRegressor(num_leaves = 31, max_depth = 4, learning_rate = 0.1, n_estimators = 100),
-        Lasso(alpha = 0.1),
-        Ridge(alpha = 0.5)
-    ]
+        Lasso(alpha = 0.1)]
+    _, layer_2_test = stack_layer(clf_names, classifiers, layer_1_train, train_y, layer_1_test)
+
+    layer_2_test = np.average(layer_2_test,axis = 1)
+
+    return layer_2_test
+
+
+def main():
+    size = 2000
+    dataset = pd.read_csv("/home/stirfryrabbit/Documents/train_w1.csv")
+    train = dataset.drop(["data_date", "goods_id", "sku_id", "label"], axis = 1).loc[:size].values
+    label = dataset.label.loc[:size].values
+    test = dataset.drop(["data_date", "goods_id", "sku_id", "label"], axis = 1).loc[size+1:size+500].values
+    pred = two_layer_stack(train, label, test)
+    print(type(pred))
+
+main()
